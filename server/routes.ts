@@ -2,6 +2,8 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { getUncachableStripeClient, getStripePublishableKey } from "./stripeClient";
+import { createCheckout as createInfiniteCheckout, buildCheckoutUrl, getInfinitePayPublishableKey } from './infinitePayClient';
+import { randomUUID } from 'crypto';
 import { WebhookHandlers } from "./webhookHandlers";
 
 const PLANS = {
@@ -43,44 +45,54 @@ export async function registerRoutes(
 
   app.post('/api/checkout', async (req, res) => {
     try {
-      const { planId, email } = req.body;
-      
+      const { planId, email, platform = 'web', appOptions } = req.body;
+
       if (!planId || !PLANS[planId as keyof typeof PLANS]) {
         return res.status(400).json({ error: 'Invalid plan selected' });
       }
 
       const plan = PLANS[planId as keyof typeof PLANS];
-      const stripe = await getUncachableStripeClient();
 
-      const baseUrl = `https://${process.env.REPLIT_DOMAINS?.split(',')[0]}`;
+      // Build redirect URL back to site (include a local order id)
+      const baseUrl = `https://${process.env.REPLIT_DOMAINS?.split(',')[0]}` || (process.env.BASE_URL || 'http://localhost:5000');
+      const orderSessionId = randomUUID();
+      const redirectUrl = `${process.env.CLIENT_REDIRECT_URL || baseUrl}/success?order_id=${orderSessionId}`;
 
-      const session = await stripe.checkout.sessions.create({
-        payment_method_types: ['card'],
-        mode: 'payment',
-        customer_email: email || undefined,
-        line_items: [
-          {
-            price_data: {
-              currency: 'brl',
-              product_data: {
-                name: `AkemiSoft ${plan.name}`,
-                description: plan.description,
-                images: ['https://images.unsplash.com/photo-1542751371-adc38448a05e?w=400'],
-              },
-              unit_amount: plan.amount,
-            },
-            quantity: 1,
-          },
-        ],
-        success_url: `${baseUrl}/success?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${baseUrl}/#pricing`,
-        metadata: {
-          planId: planId,
-          planName: plan.name
-        }
+      const checkoutOpts: any = {
+        planName: `AkemiSoft ${plan.name}`,
+        amount: plan.amount,
+        redirectUrl,
+        platform,
+      };
+
+      if (platform === 'app') {
+        checkoutOpts.appOptions = {
+          handle: appOptions?.handle,
+          doc_number: appOptions?.doc_number,
+          payment_method: appOptions?.payment_method,
+          installments: appOptions?.installments,
+          app_client_referrer: appOptions?.app_client_referrer,
+          af_force_deeplink: appOptions?.af_force_deeplink,
+        };
+      }
+
+      const result = await createInfiniteCheckout(checkoutOpts);
+      const url = result.url;
+
+      // create pending order locally so we can reconcile after redirect
+      await storage.createOrder({
+        stripeSessionId: orderSessionId,
+        stripeCustomerId: null,
+        customerEmail: email || null,
+        customerName: null,
+        planName: plan.name,
+        amount: plan.amount,
+        currency: 'brl',
+        status: 'pending',
+        paymentStatus: null,
       });
 
-      res.json({ url: session.url, sessionId: session.id });
+      res.json({ url, sessionId: orderSessionId });
     } catch (error: any) {
       console.error('Checkout error:', error);
       res.status(500).json({ error: error.message || 'Checkout failed' });
