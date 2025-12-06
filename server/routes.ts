@@ -45,7 +45,7 @@ export async function registerRoutes(
 
   app.post('/api/checkout', async (req, res) => {
     try {
-      const { planId, email, platform = 'web', appOptions } = req.body;
+      const { planId, email } = req.body;
 
       if (!planId || !PLANS[planId as keyof typeof PLANS]) {
         return res.status(400).json({ error: 'Invalid plan selected' });
@@ -58,26 +58,7 @@ export async function registerRoutes(
       const orderSessionId = randomUUID();
       const redirectUrl = `${process.env.CLIENT_REDIRECT_URL || baseUrl}/success?order_id=${orderSessionId}`;
 
-      const checkoutOpts: any = {
-        planName: `AkemiSoft ${plan.name}`,
-        amount: plan.amount,
-        redirectUrl,
-        platform,
-      };
-
-      if (platform === 'app') {
-        checkoutOpts.appOptions = {
-          handle: appOptions?.handle,
-          doc_number: appOptions?.doc_number,
-          payment_method: appOptions?.payment_method,
-          installments: appOptions?.installments,
-          app_client_referrer: appOptions?.app_client_referrer,
-          af_force_deeplink: appOptions?.af_force_deeplink,
-        };
-      }
-
-      const result = await createInfiniteCheckout(checkoutOpts);
-      const url = result.url;
+      const { url } = await createInfiniteCheckout({ planName: `AkemiSoft ${plan.name}`, amount: plan.amount, redirectUrl });
 
       // create pending order locally so we can reconcile after redirect
       await storage.createOrder({
