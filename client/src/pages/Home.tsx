@@ -6,20 +6,98 @@ import { BootSequence } from "@/components/BootSequence";
 import { CyberGrid } from "@/components/CyberGrid";
 import { StatCounter } from "@/components/StatCounter";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { 
   Cpu, Zap, Gauge, MousePointer2, ChevronRight, 
   Terminal, Activity, BarChart3, Layers, Wifi, 
   Settings, CheckCircle2, XCircle, Trophy, 
-  Timer, AlertTriangle, ArrowRight, ShieldCheck 
+  Timer, AlertTriangle, ArrowRight, ShieldCheck, Loader2, Mail 
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { useToast } from "@/hooks/use-toast";
 
 import cityBg from "@assets/generated_images/pixel_art_cyberpunk_city_skyline_background.png"; 
+
+const PLAN_NAMES = {
+  starter: 'STARTER',
+  pro_gamer: 'PRO GAMER',
+  full_tweak: 'FULL TWEAK'
+};
 
 export default function Home() {
   const [booted, setBooted] = useState(false);
   const [timeLeft, setTimeLeft] = useState({ m: 15, s: 0 });
+  const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
+  const [emailDialogOpen, setEmailDialogOpen] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<'starter' | 'pro_gamer' | 'full_tweak' | null>(null);
+  const [customerEmail, setCustomerEmail] = useState('');
+  const [emailError, setEmailError] = useState('');
+  const { toast } = useToast();
+
+  const validateEmail = (email: string) => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
+  const openEmailDialog = (planId: 'starter' | 'pro_gamer' | 'full_tweak') => {
+    setSelectedPlan(planId);
+    setEmailError('');
+    setEmailDialogOpen(true);
+  };
+
+  const handleCheckout = async () => {
+    if (!selectedPlan) return;
+    
+    if (!customerEmail.trim()) {
+      setEmailError('Por favor, insira seu email');
+      return;
+    }
+    
+    if (!validateEmail(customerEmail)) {
+      setEmailError('Por favor, insira um email válido');
+      return;
+    }
+
+    setCheckoutLoading(selectedPlan);
+    setEmailError('');
+    
+    try {
+      const response = await fetch('/api/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ planId: selectedPlan, email: customerEmail })
+      });
+      
+      const data = await response.json();
+      
+      if (data.error) {
+        setEmailError(data.error);
+        setCheckoutLoading(null);
+        return;
+      }
+      
+      if (data.url) {
+        setEmailDialogOpen(false);
+        window.location.href = data.url;
+      }
+    } catch (error) {
+      setEmailError('Erro de conexão. Tente novamente.');
+      setCheckoutLoading(null);
+    }
+  };
+
+  const scrollToPricing = () => {
+    document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' });
+  };
 
   // Countdown timer logic for FOMO
   useEffect(() => {
@@ -110,7 +188,12 @@ export default function Home() {
               transition={{ duration: 0.8, delay: 0.6 }}
               className="flex flex-col md:flex-row gap-6 w-full md:w-auto items-center"
             >
-              <Button size="lg" className="bg-gradient-to-r from-primary to-purple-600 hover:from-primary/90 hover:to-purple-600/90 text-white font-black font-display text-2xl px-12 py-8 rounded-none border-2 border-white/20 transition-all shadow-[0_0_40px_rgba(217,70,239,0.6)] hover:shadow-[0_0_60px_rgba(217,70,239,0.8)] hover:scale-105 active:scale-95 w-full md:w-auto">
+              <Button 
+                size="lg" 
+                onClick={scrollToPricing}
+                className="bg-gradient-to-r from-primary to-purple-600 hover:from-primary/90 hover:to-purple-600/90 text-white font-black font-display text-2xl px-12 py-8 rounded-none border-2 border-white/20 transition-all shadow-[0_0_40px_rgba(217,70,239,0.6)] hover:shadow-[0_0_60px_rgba(217,70,239,0.8)] hover:scale-105 active:scale-95 w-full md:w-auto"
+                data-testid="button-hero-cta"
+              >
                 <Zap className="mr-3 h-8 w-8 fill-yellow-300 text-yellow-300 animate-pulse" />
                 QUERO FPS MÁXIMO
               </Button>
@@ -246,7 +329,19 @@ export default function Home() {
                   </ul>
                 </div>
                 <div className="p-8">
-                  <Button variant="ghost" className="w-full border border-white/20 hover:bg-white hover:text-black">ESCOLHER BÁSICO</Button>
+                  <Button 
+                    variant="ghost" 
+                    className="w-full border border-white/20 hover:bg-white hover:text-black"
+                    onClick={() => openEmailDialog('starter')}
+                    disabled={checkoutLoading === 'starter'}
+                    data-testid="button-checkout-starter"
+                  >
+                    {checkoutLoading === 'starter' ? (
+                      <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> PROCESSANDO...</>
+                    ) : (
+                      'ESCOLHER BÁSICO'
+                    )}
+                  </Button>
                 </div>
               </RetroCard>
 
@@ -277,8 +372,17 @@ export default function Home() {
                     </div>
                     
                     <div className="p-8">
-                      <Button className="w-full h-16 text-xl font-black bg-primary hover:bg-primary/90 shadow-[0_0_30px_rgba(217,70,239,0.4)] animate-shimmer bg-[linear-gradient(110deg,#d946ef,45%,#f0abfc,55%,#d946ef)] bg-[length:200%_100%] transition-colors">
-                        QUERO COMPRAR AGORA
+                      <Button 
+                        className="w-full h-16 text-xl font-black bg-primary hover:bg-primary/90 shadow-[0_0_30px_rgba(217,70,239,0.4)] animate-shimmer bg-[linear-gradient(110deg,#d946ef,45%,#f0abfc,55%,#d946ef)] bg-[length:200%_100%] transition-colors"
+                        onClick={() => openEmailDialog('pro_gamer')}
+                        disabled={checkoutLoading === 'pro_gamer'}
+                        data-testid="button-checkout-pro"
+                      >
+                        {checkoutLoading === 'pro_gamer' ? (
+                          <><Loader2 className="w-5 h-5 mr-2 animate-spin" /> PROCESSANDO...</>
+                        ) : (
+                          'QUERO COMPRAR AGORA'
+                        )}
                       </Button>
                       <p className="text-center text-[10px] text-gray-500 mt-3 flex justify-center items-center gap-1">
                         <ShieldCheck className="w-3 h-3" /> Pagamento 100% Seguro via PIX/Cartão
@@ -301,7 +405,19 @@ export default function Home() {
                   </ul>
                 </div>
                 <div className="p-8">
-                  <Button variant="outline" className="w-full border-secondary text-secondary hover:bg-secondary hover:text-black">AGENDAR VIP</Button>
+                  <Button 
+                    variant="outline" 
+                    className="w-full border-secondary text-secondary hover:bg-secondary hover:text-black"
+                    onClick={() => openEmailDialog('full_tweak')}
+                    disabled={checkoutLoading === 'full_tweak'}
+                    data-testid="button-checkout-full"
+                  >
+                    {checkoutLoading === 'full_tweak' ? (
+                      <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> PROCESSANDO...</>
+                    ) : (
+                      'AGENDAR VIP'
+                    )}
+                  </Button>
                 </div>
               </RetroCard>
             </div>
@@ -354,9 +470,80 @@ export default function Home() {
              <div className="text-white font-bold text-sm">OFERTA RELÂMPAGO</div>
              <div className="text-primary font-mono text-xs">Termina em {String(timeLeft.m).padStart(2, '0')}:{String(timeLeft.s).padStart(2, '0')}</div>
            </div>
-           <Button className="bg-primary text-black font-bold">COMPRAR AGORA</Button>
+           <Button 
+             className="bg-primary text-black font-bold"
+             onClick={() => openEmailDialog('pro_gamer')}
+             disabled={checkoutLoading === 'pro_gamer'}
+             data-testid="button-mobile-checkout"
+           >
+             {checkoutLoading === 'pro_gamer' ? <Loader2 className="w-4 h-4 animate-spin" /> : 'COMPRAR AGORA'}
+           </Button>
         </div>
       </div>
+
+      <Dialog open={emailDialogOpen} onOpenChange={setEmailDialogOpen}>
+        <DialogContent className="bg-black border-primary/30 max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-display text-white flex items-center gap-2">
+              <Mail className="w-6 h-6 text-primary" />
+              Finalize sua compra
+            </DialogTitle>
+            <DialogDescription className="text-gray-400">
+              {selectedPlan && (
+                <span>
+                  Plano selecionado: <span className="text-primary font-bold">{PLAN_NAMES[selectedPlan]}</span>
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 mt-4">
+            <div className="space-y-2">
+              <Label htmlFor="email" className="text-white font-mono">
+                Seu melhor email
+              </Label>
+              <Input
+                id="email"
+                type="email"
+                placeholder="seu@email.com"
+                value={customerEmail}
+                onChange={(e) => {
+                  setCustomerEmail(e.target.value);
+                  setEmailError('');
+                }}
+                className="bg-white/5 border-white/20 text-white placeholder:text-gray-500 focus:border-primary"
+                data-testid="input-email"
+              />
+              {emailError && (
+                <p className="text-red-500 text-sm font-mono">{emailError}</p>
+              )}
+              <p className="text-xs text-gray-500 font-mono">
+                Você receberá o acesso ao produto neste email.
+              </p>
+            </div>
+            
+            <Button
+              onClick={handleCheckout}
+              disabled={checkoutLoading !== null}
+              className="w-full h-12 font-black bg-primary hover:bg-primary/90 text-white"
+              data-testid="button-confirm-checkout"
+            >
+              {checkoutLoading ? (
+                <><Loader2 className="w-5 h-5 mr-2 animate-spin" /> PROCESSANDO...</>
+              ) : (
+                <>
+                  <ShieldCheck className="w-5 h-5 mr-2" />
+                  CONTINUAR PARA PAGAMENTO
+                </>
+              )}
+            </Button>
+            
+            <p className="text-center text-[10px] text-gray-500 flex justify-center items-center gap-1">
+              <ShieldCheck className="w-3 h-3" /> Pagamento 100% Seguro via PIX/Cartão
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
