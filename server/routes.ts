@@ -25,9 +25,9 @@ const PLANS = {
 };
 
 export async function registerRoutes(
-  httpServer: Server,
+  httpServer: Server | undefined,
   app: Express
-): Promise<Server> {
+): Promise<Server | undefined> {
 
   app.get('/api/stripe/publishable-key', async (_req, res) => {
     try {

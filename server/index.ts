@@ -1,25 +1,14 @@
-import express, { type Request, Response, NextFunction } from "express";
-import { registerRoutes } from "./routes";
-import { serveStatic } from "./static";
-import { createServer } from "http";
+import { createServer } from 'http';
+import createApp from './app';
 import { runMigrations } from 'stripe-replit-sync';
-import { getStripeSync } from "./stripeClient";
-import { WebhookHandlers } from "./webhookHandlers";
+import { getStripeSync } from './stripeClient';
+import { serveStatic } from './static';
 
-const app = express();
-const httpServer = createServer(app);
-
-declare module "http" {
-  interface IncomingMessage {
-    rawBody: unknown;
-  }
-}
-
-export function log(message: string, source = "express") {
-  const formattedTime = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
+export function log(message: string, source = 'express') {
+  const formattedTime = new Date().toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
     hour12: true,
   });
 
@@ -36,8 +25,8 @@ async function initStripe() {
 
   try {
     log('Initializing Stripe schema...', 'stripe');
-    await runMigrations({ 
-      databaseUrl
+    await runMigrations({
+      databaseUrl,
     });
     log('Stripe schema ready', 'stripe');
 
@@ -50,11 +39,12 @@ async function initStripe() {
       {
         enabled_events: ['checkout.session.completed', 'payment_intent.succeeded'],
         description: 'AkemiSoft checkout webhook',
-      }
+      },
     );
     log(`Webhook configured: ${webhook.url}`, 'stripe');
 
-    stripeSync.syncBackfill()
+    stripeSync
+      .syncBackfill()
       .then(() => {
         log('Stripe data synced', 'stripe');
       })
@@ -66,100 +56,46 @@ async function initStripe() {
   }
 }
 
-app.post(
-  '/api/stripe/webhook/:uuid',
-  express.raw({ type: 'application/json' }),
-  async (req, res) => {
-    const signature = req.headers['stripe-signature'];
+async function runLocal() {
+  const app = await createApp();
+  const httpServer = createServer(app as any);
 
-    if (!signature) {
-      return res.status(400).json({ error: 'Missing stripe-signature' });
-    }
-
-    try {
-      const sig = Array.isArray(signature) ? signature[0] : signature;
-
-      if (!Buffer.isBuffer(req.body)) {
-        console.error('STRIPE WEBHOOK ERROR: req.body is not a Buffer');
-        return res.status(500).json({ error: 'Webhook processing error' });
-      }
-
-      const { uuid } = req.params;
-      await WebhookHandlers.processWebhook(req.body as Buffer, sig, uuid);
-
-      res.status(200).json({ received: true });
-    } catch (error: any) {
-      console.error('Webhook error:', error.message);
-      res.status(400).json({ error: 'Webhook processing error' });
-    }
-  }
-);
-
-app.use(
-  express.json({
-    verify: (req, _res, buf) => {
-      req.rawBody = buf;
-    },
-  }),
-);
-
-app.use(express.urlencoded({ extended: false }));
-
-app.use((req, res, next) => {
-  const start = Date.now();
-  const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
-
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      log(logLine);
-    }
-  });
-
-  next();
-});
-
-(async () => {
   await initStripe();
-  
-  await registerRoutes(httpServer, app);
 
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  await (await import('./routes')).registerRoutes(httpServer, app);
+
+  (app as any).use((err: any, _req: any, res: any, _next: any) => {
     const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+    const message = err.message || 'Internal Server Error';
 
     res.status(status).json({ message });
     throw err;
   });
 
-  if (process.env.NODE_ENV === "production") {
+  if (process.env.NODE_ENV === 'production') {
     serveStatic(app);
   } else {
-    const { setupVite } = await import("./vite");
+    const { setupVite } = await import('./vite');
     await setupVite(httpServer, app);
   }
 
-  const port = parseInt(process.env.PORT || "5000", 10);
+  const port = parseInt(process.env.PORT || '5000', 10);
   httpServer.listen(
     {
       port,
-      host: "0.0.0.0",
+      host: '0.0.0.0',
       reusePort: true,
     },
     () => {
       log(`serving on port ${port}`);
     },
   );
-})();
+}
+
+if (process.env.NODE_ENV !== 'test' && process.env.VERCEL !== '1') {
+  // only run local server when executed directly (not when imported by serverless wrapper)
+  runLocal().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
